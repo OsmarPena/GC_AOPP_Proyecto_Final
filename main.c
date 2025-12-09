@@ -4,8 +4,17 @@
 #include <string.h>
 #include "estructuras.h"
 
-int animando = 1; // La animación empieza al instante
+/* COMPILACIÓN
+WINDOWS: gcc main.c render.c animacion.c -o proyecto.exe -lfreeglut -lopengl32 -lglu32
+LINUX: gcc main.c render.c animacion.c -o proyecto -lGL -lGLU -lglut -lm
+*/
+
+int animando = 0; // La animación no empieza al instante
 Joint *personaje = NULL;
+
+extern NodoEscena *escena_raiz; // Árbol principal
+extern ListaObjetos lista_objetos_activos;
+extern Camara camara_escena;
 
 // Identificadores de ventanas
 int ventana_principal;
@@ -16,16 +25,19 @@ int ancho_ventana = 800;
 int alto_ventana = 600;
 const int alto_subventana = 80;
 
-// Funciones externas
+extern void renderizarEscena(NodoEscena *nodo);
 extern Joint* armarRobot();
-extern void renderizarArbol(Joint *nodo);
-extern void dibujarPiso();
-extern void actualizarAnimacion(Joint* robot);
 extern void iniciarGuion();
+extern void actualizarAnimacion(Joint* robot);
 extern void reiniciarAnimacion();
 extern float obtenerTiempoActual();
+
+// Funciones externas
+extern void renderizarArbol(Joint *nodo);
+extern void dibujarPiso();
+extern void dibujarParedes();
+extern void dibujarCajas(int f, int c, int ff, int fc);
 extern void actualizarCamara();
-extern Camara camara_escena;
 
 void mostrarTexto(float x, float y, const char *string, void *font) {
     glRasterPos2f(x, y);
@@ -36,7 +48,7 @@ void mostrarTexto(float x, float y, const char *string, void *font) {
 }
 
 void agregarBoton(float x, float y, float ancho, float alto, float r, float g, float b, int tipo) {
-    // Fondo (Color metálico)
+    // Fondo
     glColor3f(r, g, b);
     glRectf(x, y, x + ancho, y + alto);
 
@@ -50,10 +62,10 @@ void agregarBoton(float x, float y, float ancho, float alto, float r, float g, f
         glVertex2f(x, y + alto);
     glEnd();
 
-    // Color de los íconos
+    // Color de los í­conos
     glColor3f(0.0f, 0.0f, 0.0f);
 
-    if (tipo == 1) { // Botón de play
+    if (tipo == 1) { // Botó³n de play
         glBegin(GL_TRIANGLES);
             glVertex2f(x + ancho * 0.4f, y + alto * 0.3f);
             glVertex2f(x + ancho * 0.7f, y + alto * 0.5f);
@@ -77,7 +89,7 @@ void agregarBoton(float x, float y, float ancho, float alto, float r, float g, f
 
 // Sub-ventana
 void displayMenu() {
-    glClearColor(0.92f, 0.92f, 0.94f, 1.0f);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     glDisable(GL_DEPTH_TEST);
@@ -117,6 +129,32 @@ void displayMenu() {
     // Reiniciar
     agregarBoton(x_pos + boton_tam + espacio, y_pos, boton_tam, boton_tam, 0.55f, 0.65f, 0.75f, 3); 
     
+    float x_salir = x_pos + 2 * (boton_tam + espacio);
+
+    glColor3f(0.7f, 0.0f, 0.0f); 
+    glRectf(x_salir, y_pos, x_salir + boton_tam, y_pos + boton_tam);
+    
+    // Borde
+    glColor3f(0.5f, 0.5f, 0.5f);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+        glVertex2f(x_salir, y_pos);
+        glVertex2f(x_salir + boton_tam, y_pos);
+        glVertex2f(x_salir + boton_tam, y_pos + boton_tam);
+        glVertex2f(x_salir, y_pos + boton_tam);
+    glEnd();
+
+    // X de Salir
+    glColor3f(0.0f, 0.0f, 0.0f);
+    glLineWidth(3.0f);
+    glBegin(GL_LINES);
+        glVertex2f(x_salir + 10, y_pos + 10);
+        glVertex2f(x_salir + boton_tam - 10, y_pos + boton_tam - 10);
+        
+        glVertex2f(x_salir + boton_tam - 10, y_pos + 10);
+        glVertex2f(x_salir + 10, y_pos + boton_tam - 10);
+    glEnd();
+
     // Tiempo en pantalla
     char buffer[20];
     sprintf(buffer, "%.1f s", obtenerTiempoActual());
@@ -148,6 +186,12 @@ void mouseMenu(int button, int state, int x, int y) {
             reiniciarAnimacion();
             animando = 1;
         }
+
+        // Salir
+        float x_salir = x_pos + 2 * (boton_tam + espacio);
+        if (x >= x_salir && x <= x_salir + boton_tam && glY >= y_pos && glY <= y_pos + boton_tam) {
+            exit(0);
+        }
         
         glutPostRedisplay();
     }
@@ -158,12 +202,15 @@ void display() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
     
+    // Cámara dinámica controlada por la cola de acciones
     gluLookAt(camara_escena.eye.x, camara_escena.eye.y, camara_escena.eye.z,
               camara_escena.center.x, camara_escena.center.y, camara_escena.center.z,
-              0.0, 1.0, 0.0);
+              camara_escena.up.x, camara_escena.up.y, camara_escena.up.z);
 
-    dibujarPiso(); 
-    if (personaje != NULL) renderizarArbol(personaje);
+    // Esto recorre recursivamente el árbol de escenas (nodos -> hijos)
+    if (escena_raiz != NULL) {
+        renderizarEscena(escena_raiz);
+    }
     
     glutSwapBuffers();
 }
@@ -179,7 +226,7 @@ void reshape(int w, int h) {
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     float aspecto = (float)w / (float)(h - alto_subventana);
-    gluPerspective(45.0, aspecto, 0.1, 100.0); 
+    gluPerspective(45.0, aspecto, 0.1, 500.0); 
     glMatrixMode(GL_MODELVIEW);
 
     glutSetWindow(menu_subventana);
@@ -201,24 +248,37 @@ void timer(int value) {
 }
 
 void init() {
-    glClearColor(0.53f, 0.80f, 0.92f, 1.0f);
+    glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
-    glEnable(GL_NORMALIZE); 
+    glEnable(GL_NORMALIZE);
+    glEnable(GL_TEXTURE_2D);
 
-    GLfloat luz_pos[] = { 10.0f, 10.0f, 10.0f, 0.0f }; 
+    GLfloat luz_pos[] = { 0.0f, 0.0f, 20.0f, 1.0f }; 
     glLightfv(GL_LIGHT0, GL_POSITION, luz_pos);
 
     GLfloat luz_blanca[] = { 1.0f, 1.0f, 1.0f, 1.0f };
     glLightfv(GL_LIGHT0, GL_DIFFUSE, luz_blanca);
     glLightfv(GL_LIGHT0, GL_SPECULAR, luz_blanca);
 
-    GLfloat ambiente[] = { 0.6f, 0.6f, 0.6f, 1.0f }; 
+    GLfloat ambiente[] = { 0.4f, 0.4f, 0.4f, 1.0f }; 
     glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambiente);
     
     personaje = armarRobot();
     iniciarGuion();
+
+    /* Busca el nodo tipo 2 (Personaje) en la lista de activos
+       para asignarle el puntero 'personaje' que se acaba de crear,
+       así el árbol de escena sabe qué dibujar. */
+    NodoListaObjeto *aux = lista_objetos_activos.cabeza;
+    while(aux != NULL) {
+        if (aux->objeto->tipo == 2) {
+            aux->objeto->dato = (void*)personaje;
+            printf("MAIN: Robot vinculado al Nodo de Escena ID=%d\n", aux->objeto->id);
+        }
+        aux = aux->sgt;
+    }
 }
 
 int main(int argc, char** argv) {
