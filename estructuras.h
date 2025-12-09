@@ -6,28 +6,28 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-typedef struct {
-    float ambient[4];   // Color bajo, luz ambiental
-    float diffuse[4];   // Color bajo, luz directa (el color principal del objeto)
-    float specular[4];  // Color del brillo
-    float shininess;    // Qué tan concentrado es el brillo (0-128)
-} Material;
-
 // Vector 3D
 typedef struct {
     float x, y, z;
 } Vec3;
 
-// Árbol que gestionará la escena
+// Materiales
+typedef struct {
+    float ambient[4];
+    float diffuse[4];
+    float specular[4];
+    float shininess;
+} Material;
+
+// Árbol de la escena (Jerarquía Global)
 typedef struct NodoEscena {
     int id;
-    int tipo;   // 0: Vacío, 0: Geometría, 2: Personaje
-
+    int tipo;   // 1: Geometría estática (Piso / Cajas), 2: Personaje (Robot)
     Vec3 pos;
     Vec3 rot;
     Vec3 esc;
-
-    void *dato;
+    
+    void *dato; // Puntero genérico (puede apuntar al Robot Joint*)
     bool visible;
 
     struct NodoEscena *padre;
@@ -35,89 +35,75 @@ typedef struct NodoEscena {
     int num_hijos;
 } NodoEscena;
 
-// En estructuras.h
+// Árbol del robot (Jerarquía Interna)
 typedef struct Joint {
     int id;
     char nombre[32];
-
-    // Transformaciones
-    Vec3 pos_local;
-    Vec3 rot_local;
-    Vec3 esc_local;       
-
-    Vec3 pos_actual;
-    Vec3 rot_actual;
-    Vec3 esc_actual;
-
-    // Materiales y gráficos
+    Vec3 pos_local, rot_local, esc_local;       
+    Vec3 pos_actual, rot_actual, esc_actual;
     Material material;
     int textura_id;
     void (*drawFunc)(void);
-
     struct Joint *padre;      
     struct Joint *hijo[10];
     int num_hijos;
 } Joint;
 
-// Control de la vista
-typedef struct {
-    Vec3 eye;       // Dónde está la cámara
-    Vec3 center;    // Hacia dónde mira
-    Vec3 up;        // Qué vector es "arriba"
-} Camara;
+// Lista enlazada (Gestión de objetos)
+typedef struct NodoListaObjeto {
+    NodoEscena *objeto;
+    struct NodoListaObjeto *sgt;
+} NodoListaObjeto;
 
-// Pose individual para un joint en un momento dado
+typedef struct {
+    NodoListaObjeto *cabeza;
+    int count;
+} ListaObjetos;
+
+// Pila del historial
+typedef struct NodoPilaHistorial {
+    Vec3 pos_anterior;
+    Vec3 rot_anterior;
+    int objeto_id;
+    struct NodoPilaHistorial *sgt;
+} NodoPilaHistorial;
+
+typedef struct {
+    NodoPilaHistorial *tope;
+    int cont;
+} PilaHistorial;
+
+/* Estructura auxiliar para las
+transformadas entre key frames. */
 typedef struct {
     int joint_id;
-    Vec3 pos;
-    Vec3 rot;
+    Vec3 pos, rot, esc;
 } JointTransform;
 
-// Representa un momento en el tiempo
 typedef struct KeyFrame {
-    float timeStamp;        // Tiempo en segundos
-    
+    float timeStamp;
     JointTransform *poses;
     int num_poses;
-
-    struct KeyFrame *sgt;  // Puntero al siguiente KeyFrame (Lista Enlazada)
+    struct KeyFrame *sgt;
 } KeyFrame;
 
-// Contenedor de la animación completa
 typedef struct {
     char nombre[32];
-    float duracion;     // Duración total en segundos
-    KeyFrame *frames;   // Inicio de la lista
+    float duracion;
+    KeyFrame *frames;
 } Animacion;
 
-// Orden de dibujo simple
 typedef struct {
-    int tipo;           // Tipo de primitiva
-    Vec3 pos_global;    // Posición final calculada
-    Vec3 rot_global;    // Rotación final calculada
-    Vec3 esc_global;    // Escala final calculada
-
-    // Apariencia
-    int textura_id;
-    Material material;   // Para configurar glMaterialfv
-} RenderCommand;
-
-typedef struct NodoPila {
-    RenderCommand cmd;
-    struct NodoPila *sgt;
-} NodoPila;
-
-// La Pila de Renderizado
-typedef struct {
-    NodoPila *tope;
-    int cont;
-} PilaRender;
+    Vec3 eye, center, up;
+} Camara;
 
 typedef struct {
     int accion_tipo;
     Animacion *anim_actual;
-    Camara mov_camara;
+    Camara mov_camara_inicio;
+    Camara mov_camara_fin;
     float duracion;
+    int es_corte;
 } AccionEscena;
 
 typedef struct NodoCola {
@@ -125,10 +111,27 @@ typedef struct NodoCola {
     struct NodoCola *sgt;
 } NodoCola;
 
-// La Cola de Acciones
 typedef struct {
     NodoCola *frente;
     NodoCola *fondo;
 } ColaAcciones;
+
+// Estructuras de renderizado
+typedef struct {
+    int tipo;
+    Vec3 pos_global, rot_global, esc_global;
+    int textura_id;
+    Material material;
+} RenderCommand;
+
+typedef struct NodoPila {
+    RenderCommand cmd;
+    struct NodoPila *sgt;
+} NodoPila;
+
+typedef struct {
+    NodoPila *tope;
+    int cont;
+} PilaRender;
 
 #endif
