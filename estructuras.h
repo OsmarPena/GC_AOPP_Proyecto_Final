@@ -116,22 +116,4 @@ typedef struct {
     NodoCola *fondo;
 } ColaAcciones;
 
-// Estructuras de renderizado
-typedef struct {
-    int tipo;
-    Vec3 pos_global, rot_global, esc_global;
-    int textura_id;
-    Material material;
-} RenderCommand;
-
-typedef struct NodoPila {
-    RenderCommand cmd;
-    struct NodoPila *sgt;
-} NodoPila;
-
-typedef struct {
-    NodoPila *tope;
-    int cont;
-} PilaRender;
-
 #endif
