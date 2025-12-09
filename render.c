@@ -7,7 +7,6 @@
 
 #define PI 3.14159265
 
-static PilaRender pila_global;
 GLuint texturaPisoID = 0;
 GLuint texturaPechoID = 0;
 GLuint texturaParedID = 0;
@@ -77,72 +76,6 @@ GLuint cargarBMP(const char *filename) {
     return textura_id;
 }
 
-Vec3 sumarVec3(Vec3 a, Vec3 b) {
-    return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-// Rota un punto p alrededor del origen (0,0,0) según los ángulos euler (ax, ay, az)
-Vec3 rotarPunto(Vec3 p, Vec3 angulos) {
-    float radX = angulos.x * PI / 180.0f;
-    float radY = angulos.y * PI / 180.0f;
-    float radZ = angulos.z * PI / 180.0f;
-    
-    Vec3 r = p;
-    float tempY, tempZ, tempX;
-
-    // Rotación X
-    tempY = r.y * cos(radX) - r.z * sin(radX);
-    tempZ = r.y * sin(radX) + r.z * cos(radX);
-    r.y = tempY; r.z = tempZ;
-
-    // Rotación Y
-    tempX = r.x * cos(radY) + r.z * sin(radY);
-    tempZ = -r.x * sin(radY) + r.z * cos(radY);
-    r.x = tempX; r.z = tempZ;
-
-    // Rotación Z
-    tempX = r.x * cos(radZ) - r.y * sin(radZ);
-    tempY = r.x * sin(radZ) + r.y * cos(radZ);
-    r.x = tempX; r.y = tempY;
-
-    return r;
-}
-
-void initPila() {
-    pila_global.tope = NULL;
-    pila_global.cont = 0;
-}
-
-void pushComando(int tipo, Vec3 pos, Vec3 rot, Vec3 esc, Material mat, GLuint tex_id) {
-    NodoPila* nuevo = (NodoPila*)malloc(sizeof(NodoPila));
-    
-    nuevo->cmd.tipo = tipo; // 0 = Cubo, 1 = Extremidad
-    nuevo->cmd.pos_global = pos;
-    nuevo->cmd.rot_global = rot;
-    nuevo->cmd.esc_global = esc;
-    nuevo->cmd.material = mat;
-    nuevo->cmd.textura_id = tex_id;
-    
-    nuevo->sgt = pila_global.tope;
-    pila_global.tope = nuevo;
-    pila_global.cont++;
-}
-
-NodoPila* popComando() {
-    if (pila_global.tope == NULL) return NULL;
-    NodoPila* aux = pila_global.tope;
-    pila_global.tope = aux->sgt;
-    pila_global.cont--;
-    return aux;
-}
-
-void limpiarPila() {
-    while(pila_global.tope != NULL) {
-        NodoPila* n = popComando();
-        free(n);
-    }
-}
-
 void dibujarCubo() {
     float s = 0.5f;
     
@@ -194,97 +127,53 @@ void dibujarExtremidad() {
     glPopMatrix();
 }
 
-// Recorre el árbol y calcula dónde debe ir cada pieza
-void addComandos(Joint *nodo, Vec3 padrePos, Vec3 padreRot, Vec3 padreEsc) {
-    if (nodo == NULL)
-        return;
+void renderizarJointRecursivo(Joint *nodo) {
+    if (nodo == NULL) return;
 
-    // Calculo de transformación local total
-    Vec3 offset_local = sumarVec3(nodo->pos_local, nodo->pos_actual);
-    Vec3 rot_local_total = sumarVec3(nodo->rot_local, nodo->rot_actual);
+    glPushMatrix(); // <--- LA CLAVE: Guarda el estado del padre
 
-    // Antes de rotar, debemos aplicar la escala del padre al offset.
-    Vec3 offset_escalado;
-    offset_escalado.x = offset_local.x * padreEsc.x;
-    offset_escalado.y = offset_local.y * padreEsc.y;
-    offset_escalado.z = offset_local.z * padreEsc.z;
+        // 1. Transformaciones Locales (Se suman a la matriz del padre automáticamente)
+        glTranslatef(nodo->pos_local.x + nodo->pos_actual.x,
+                     nodo->pos_local.y + nodo->pos_actual.y,
+                     nodo->pos_local.z + nodo->pos_actual.z);
 
-    // Calculo de posición global
-    Vec3 offset_rot = rotarPunto(offset_escalado, padreRot);
-    Vec3 pos_global = sumarVec3(padrePos, offset_rot);
+        // Rotamos los ejes locales. 
+        // El orden importa: Y (Giro) -> X (Caminar) -> Z (Ladear) suele funcionar bien.
+        glRotatef(nodo->rot_local.y + nodo->rot_actual.y, 0, 1, 0); 
+        glRotatef(nodo->rot_local.x + nodo->rot_actual.x, 1, 0, 0); 
+        glRotatef(nodo->rot_local.z + nodo->rot_actual.z, 0, 0, 1); 
 
-    // Calculo de rotación global
-    Vec3 rot_global = sumarVec3(padreRot, rot_local_total);
+        glScalef(nodo->esc_local.x * nodo->esc_actual.x,
+                 nodo->esc_local.y * nodo->esc_actual.y,
+                 nodo->esc_local.z * nodo->esc_actual.z);
 
-    int tipoFigura = (nodo->drawFunc == dibujarExtremidad) ? 1 : 0;
-
-    // Calculo de escala global:
-    // (Escala del Padre) * (Escala Local Fija) * (Escala Actual Animada)
-    Vec3 esc_global;
-    esc_global.x = padreEsc.x * nodo->esc_local.x * nodo->esc_actual.x;
-    esc_global.y = padreEsc.y * nodo->esc_local.y * nodo->esc_actual.y;
-    esc_global.z = padreEsc.z * nodo->esc_local.z * nodo->esc_actual.z;
-
-    if (nodo->drawFunc != NULL) {
-        // Leemos el textura_id del nodo y se lo pasamos a la pila
-        pushComando(tipoFigura, pos_global, rot_global, esc_global, nodo->material, nodo->textura_id);
-    }
-
-    // Procesar Hijos (Pasando mis datos actualizados, incluida MI escala total)
-    for (int i = 0; i < nodo->num_hijos; i++) {
-        addComandos(nodo->hijo[i], pos_global, rot_global, esc_global);
-    }
-}
-
-
-// Saca los comandos de la pila y dibuja
-void popPila_Y_Dibujado() {
-    while (pila_global.tope != NULL) {
-        NodoPila* nodo = popComando();
-        RenderCommand cmd = nodo->cmd;
-
-        glPushMatrix();
-            glTranslatef(cmd.pos_global.x, cmd.pos_global.y, cmd.pos_global.z);
-            
-            glRotatef(cmd.rot_global.x, 1, 0, 0);
-            glRotatef(cmd.rot_global.y, 0, 1, 0);
-            glRotatef(cmd.rot_global.z, 0, 0, 1);
-            glScalef(cmd.esc_global.x, cmd.esc_global.y, cmd.esc_global.z);
-
-            if (cmd.textura_id > 0) {
+        // 2. Dibujado
+        if (nodo->drawFunc != NULL) {
+            if (nodo->textura_id > 0) {
                 glEnable(GL_TEXTURE_2D);
-                glBindTexture(GL_TEXTURE_2D, cmd.textura_id);
-                
-                float colorBlanco[] = {1.0f, 1.0f, 1.0f, 1.0f};
-                glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, colorBlanco);
+                glBindTexture(GL_TEXTURE_2D, nodo->textura_id);
+                float blanco[] = {1.0f, 1.0f, 1.0f, 1.0f};
+                glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, blanco);
             } else {
                 glDisable(GL_TEXTURE_2D);
-                // Establece el material difuso directamente (es para los ojos)
-                glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, cmd.material.diffuse);
+                glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, nodo->material.diffuse);
             }
-
-            // Dibujar según el tipo
-            if (cmd.tipo == 0)
-                dibujarCubo();
-            else if (cmd.tipo == 1)
-                dibujarExtremidad();
-
+            
+            nodo->drawFunc();
             glDisable(GL_TEXTURE_2D);
-        glPopMatrix();
+        }
 
-        free(nodo);
-    }
+        // 3. Recursividad: Los hijos heredarán esta posición y rotación
+        for (int i = 0; i < nodo->num_hijos; i++) {
+            renderizarJointRecursivo(nodo->hijo[i]);
+        }
+
+    glPopMatrix(); // <--- Regresamos al padre para seguir con el siguiente hermano
 }
 
 void renderizarArbol(Joint *nodo) {
-    if (nodo == NULL)
-        return;
-    
-    limpiarPila();
-    addComandos(nodo, (Vec3){0,0,0}, (Vec3){0,0,0}, (Vec3){1.0f, 1.0f, 1.0f});
-    popPila_Y_Dibujado();
+    renderizarJointRecursivo(nodo);
 }
-
 
 Joint* crearJoint(char* nombre) {
     Joint* j = (Joint*)malloc(sizeof(Joint));
@@ -399,7 +288,7 @@ Joint* armarRobot() {
     cabeza->hijo[1] = ojoDer;
     cabeza->num_hijos = 2;
 
-    // El torso es padre de todo lo demÃ¡s
+    // El torso es padre de todo lo demás
     torso->hijo[0] = cuello;
     torso->hijo[1] = cabeza;
     torso->hijo[2] = piernaI;
@@ -623,33 +512,26 @@ void renderizarEscena(NodoEscena *nodo) {
     if (nodo == NULL || !nodo->visible) return;
 
     glPushMatrix();
-        // Aplicar transformaciones del nodo de escena
         glTranslatef(nodo->pos.x, nodo->pos.y, nodo->pos.z);
         glRotatef(nodo->rot.x, 1, 0, 0);
         glRotatef(nodo->rot.y, 0, 1, 0);
         glRotatef(nodo->rot.z, 0, 0, 1);
         glScalef(nodo->esc.x, nodo->esc.y, nodo->esc.z);
 
-        // Se dibujará según el tipo
         if (nodo->tipo == 1) { 
-            
-            // Si la posición Y es negativa, es piso
             if (nodo->pos.y < -1.0)
                 dibujarPiso();
-            // Si tiene Z, son cajas
-            else if (nodo->pos.z > 1.0)
-                dibujarCajas(3, 10, -1, -1);
-            // Si está en 0,0,0, paredes
+            else if (nodo->pos.z > 1.0) {
+                dibujarCajas(5, 12, 2, 4); 
+            }
             else 
                 dibujarParedes(); 
         } else if (nodo->tipo == 2) {
-            // Aquí va el personaje
             if (nodo->dato != NULL) {
                 renderizarArbol((Joint*)nodo->dato);
             }
         }
 
-        // Recursividad para hijos
         for (int i = 0; i < nodo->num_hijos; i++) {
             renderizarEscena(nodo->hijos[i]);
         }
